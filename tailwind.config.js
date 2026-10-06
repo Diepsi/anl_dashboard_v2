@@ -9,8 +9,19 @@ export default {
         './resources/views/**/*.blade.php',
     ],
 
+    darkMode: 'selector',
+
     theme: {
         extend: {
+            colors: {
+                canvas: 'rgb(var(--anl-canvas) / <alpha-value>)',
+                surface: 'rgb(var(--anl-surface) / <alpha-value>)',
+                'surface-subtle': 'rgb(var(--anl-surface-subtle) / <alpha-value>)',
+                border: 'rgb(var(--anl-border) / <alpha-value>)',
+                ink: 'rgb(var(--anl-ink) / <alpha-value>)',
+                muted: 'rgb(var(--anl-muted) / <alpha-value>)',
+                brand: 'rgb(var(--anl-brand) / <alpha-value>)',
+            },
             fontFamily: {
                 sans: ['Figtree', ...defaultTheme.fontFamily.sans],
             },

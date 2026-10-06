@@ -2,13 +2,18 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 
 class Shipment extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'no_resi',
+        'resi_valid',
+        'resi_catatan',
         'nomor_redock',
         'delivery_order',
         'nama_sekolah',
@@ -22,6 +27,8 @@ class Shipment extends Model
         'nama_funder',
         'vendor_lm',
         'tanggal_manifest',
+        'tanggal_efektif',
+        'tanggal_sumber',
         'completed_date',
         'tgl_sampai_kota_tujuan',
         'aging',
@@ -34,7 +41,6 @@ class Shipment extends Model
         'sla_result',
         'bast_tgl_balik',
         'bast_tgl_ke_finance',
-        'bast_keterangan',
     ];
 
     protected $guarded = ['id'];
@@ -43,6 +49,7 @@ class Shipment extends Model
     {
         return [
             'tanggal_manifest' => 'date',
+            'tanggal_efektif' => 'date',
             'completed_date' => 'date',
             'tgl_sampai_kota_tujuan' => 'date',
             'aging' => 'integer',
@@ -50,18 +57,32 @@ class Shipment extends Model
             'sla' => 'integer',
             'bast_tgl_balik' => 'date',
             'bast_tgl_ke_finance' => 'date',
+            'resi_valid' => 'boolean',
         ];
     }
 
+    public function scopeForVendor($query, mixed $vendor)
+    {
+        if (! is_string($vendor) || trim($vendor) === '') {
+            return $query;
+        }
+
+        return $query->where('vendor_lm', trim($vendor));
+    }
+
+    /**
+     * Filter rentang tanggal memakai `tanggal_efektif` supaya baris yang hanya
+     * punya `Completed date` tetap terlihat. Rentang dihitung mundur dari tanggal
+     * TERAKHIR di data (bukan hari ini), agar dashboard tetap menampilkan data
+     * aktif meski sumber GSheet belum diperbarui.
+     */
     public function scopeInRange($query, int $days)
     {
         if ($days <= 0) {
             return $query;
         }
 
-        // Range dihitung mundur dari tanggal manifest TERAKHIR di data (bukan hari ini),
-        // agar dashboard tetap menampilkan data aktif meski sumber GSheet belum diperbarui.
-        $latest = $query->clone()->selectRaw('MAX(tanggal_manifest) as latest')->value('latest');
+        $latest = $query->clone()->selectRaw('MAX(tanggal_efektif) as latest')->value('latest');
 
         if (! $latest) {
             return $query;
@@ -69,6 +90,15 @@ class Shipment extends Model
 
         $anchor = ($latest instanceof \DateTimeInterface) ? $latest : Carbon::parse($latest);
 
-        return $query->where('tanggal_manifest', '>=', $anchor->copy()->subDays($days - 1)->startOfDay());
+        return $query->where('tanggal_efektif', '>=', $anchor->copy()->subDays($days - 1)->startOfDay());
+    }
+
+    /**
+     * Tanggal HO asli saja (tanpa turunan dari Completed date). Dipakai untuk
+     * perhitungan durasi pengiriman.
+     */
+    public function scopeWithRealManifestDate($query)
+    {
+        return $query->whereNotNull('tanggal_manifest');
     }
 }

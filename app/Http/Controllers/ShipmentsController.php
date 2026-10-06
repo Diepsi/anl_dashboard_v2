@@ -20,11 +20,13 @@ class ShipmentsController extends Controller
         $status = $request->input('status');
         $provinsi = $request->input('provinsi');
         $stagging = $request->input('stagging');
+        $vendor = $request->input('vendor');
         $sla = $request->input('sla');
+        $resi = $request->input('resi');
         $search = trim((string) $request->input('search'));
 
         $shipments = $this->filteredQuery($request)
-            ->orderByDesc('tanggal_manifest')
+            ->orderByDesc('tanggal_efektif')
             ->orderByDesc('id')
             ->paginate(25)
             ->withQueryString();
@@ -47,28 +49,39 @@ class ShipmentsController extends Controller
             ->whereNotNull('stagging')
             ->orderBy('stagging')
             ->pluck('stagging');
+        $vendors = Shipment::query()
+            ->select('vendor_lm')
+            ->distinct()
+            ->whereNotNull('vendor_lm')
+            ->where('vendor_lm', '<>', '')
+            ->orderBy('vendor_lm')
+            ->pluck('vendor_lm');
 
         return view('shipments', compact(
             'status',
             'provinsi',
             'stagging',
+            'vendor',
             'sla',
+            'resi',
             'search',
             'shipments',
             'statuses',
             'provinces',
             'staggingList',
+            'vendors',
         ));
     }
 
     public function export(Request $request)
     {
         $query = $this->filteredQuery($request)
-            ->orderByDesc('tanggal_manifest')
+            ->orderByDesc('tanggal_efektif')
             ->orderByDesc('id');
 
         $columns = [
             'no_resi' => 'No Resi',
+            'resi_catatan' => 'Catatan Resi',
             'nomor_redock' => 'Nomor Redock',
             'delivery_order' => 'Delivery Order',
             'nama_sekolah' => 'Nama Sekolah',
@@ -82,6 +95,8 @@ class ShipmentsController extends Controller
             'nama_funder' => 'Nama Funder',
             'vendor_lm' => 'Vendor LM',
             'tanggal_manifest' => 'Tanggal Manifest',
+            'tanggal_efektif' => 'Tanggal Acuan',
+            'tanggal_sumber' => 'Sumber Tanggal Acuan',
             'completed_date' => 'Tanggal Selesai',
             'tgl_sampai_kota_tujuan' => 'Tgl Sampai Kota Tujuan',
             'aging' => 'Aging (hari)',
@@ -94,18 +109,18 @@ class ShipmentsController extends Controller
             'sla_result' => 'SLA Result',
             'bast_tgl_balik' => 'BAST Tgl Balik',
             'bast_tgl_ke_finance' => 'BAST Tgl ke Finance',
-            'bast_keterangan' => 'BAST Keterangan',
         ];
 
         $dateFields = [
             'tanggal_manifest',
+            'tanggal_efektif',
             'completed_date',
             'tgl_sampai_kota_tujuan',
             'bast_tgl_balik',
             'bast_tgl_ke_finance',
         ];
 
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Pengiriman');
 
@@ -212,11 +227,23 @@ class ShipmentsController extends Controller
         if ($stagging = $request->input('stagging')) {
             $filterParts[] = 'stagging: '.$stagging;
         }
+        if ($vendor = $request->input('vendor')) {
+            $filterParts[] = 'Vendor LM: '.$vendor;
+        }
         if ($request->input('sla') === 'out') {
             $filterParts[] = 'SLA: Out SLA';
         } elseif ($request->input('sla') === 'meet') {
             $filterParts[] = 'SLA: Meet SLA';
         }
+
+        if ($resi = $request->input('resi')) {
+            $filterParts[] = match ($resi) {
+                'invalid' => 'Resi: tidak valid',
+                'duplicate' => 'Resi: duplikat',
+                default => 'Resi: '.$resi,
+            };
+        }
+
         if ($search = trim((string) $request->input('search'))) {
             $filterParts[] = 'cari: "'.$search.'"';
         }
@@ -256,11 +283,20 @@ class ShipmentsController extends Controller
             $query->where('stagging', $stagging);
         }
 
+        $query->forVendor($request->input('vendor'));
+
         $sla = $request->input('sla');
         if ($sla === 'out') {
             $query->where('sla_result', 'Out SLA');
         } elseif ($sla === 'meet') {
             $query->where('sla_result', 'Meet SLA');
+        }
+
+        $resi = $request->input('resi');
+        if ($resi === 'invalid') {
+            $query->where('resi_valid', false);
+        } elseif ($resi === 'duplicate') {
+            $query->where('resi_catatan', ShipmentSyncService::RESI_CATATAN_DUPLIKAT);
         }
 
         $search = trim((string) $request->input('search'));

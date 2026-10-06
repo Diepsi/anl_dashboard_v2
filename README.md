@@ -1,4 +1,4 @@
-# ANL Dashboard
+# ANL Dashboard V2
 
 Dashboard operasional manajemen pengiriman (shipment) dengan sumber data dari publikasi Google Sheets (vendor **BOMA**). Aplikasi ini menampilkan KPI, tren harian, pipeline stagging, dan analisis bottleneck Over SLA secara real-time.
 
@@ -17,9 +17,12 @@ Dashboard operasional manajemen pengiriman (shipment) dengan sumber data dari pu
 Data pengiriman disinkronkan dari **CSV publik Google Sheets** ke tabel database `shipments`.
 
 - URL CSV dikonfigurasi lewat `GOOGLE_SHEETS_CSV_URL` di `.env`.
-- Sinkronisasi dilakukan via `php artisan shipments:sync` (`App\Services\ShipmentSyncService`) — **upsert** berdasarkan `no_resi`.
-- Jika URL sheet diubah, service otomatis **truncate + import ulang** (deteksi via cache fingerprint `shipments.source_fingerprint`) sehingga dashboard mengikuti sheet terbaru.
-- Gunakan `--replace` untuk memaksa truncate manual.
+- Sinkronisasi dilakukan via `php artisan shipments:sync` (`App\Services\ShipmentSyncService`) — **selalu full replace**: `DELETE` + bulk `INSERT` per 500 baris dalam satu transaksi.
+- **Tidak ada baris sumber yang dibuang.** Duplikat `no_resi` disimpan semua lalu ditandai lewat `resi_catatan`, bukan digabung.
+- Parity guard membandingkan jumlah baris sumber dengan `COUNT(*)` tabel; selisih apa pun membuat transaksi di-rollback.
+- Ganti `GOOGLE_SHEETS_CSV_URL` di `.env` lalu jalankan ulang sync — tabel kosong otomatis mengikuti sheet baru.
+- Nomor resi bermasalah tetap disimpan, hanya diberi label: `KOSONG`, `NO_FUNGSI` (`#N/A`), `NOMOR_RUSAK` (scientific notation), `FORMAT_TIDAK_VALID`, `DUPLIKAT`.
+- `tanggal_manifest` hanya diisi dari tanggal HO yang masuk akal; bila tidak ada, `Completed date` dipakai sebagai `tanggal_efektif` supaya KPI durasi tetap akurat (`tanggal_sumber` mencatat asalannya).
 - Waktu sinkronisasi terakhir (`shipments.last_synced_at`) ditampilkan di dashboard.
 
 ## Persyaratan
@@ -40,7 +43,7 @@ php artisan key:generate
 Konfigurasi `.env`:
 
 ```env
-APP_NAME="ANL Dashboard"
+APP_NAME="ANL Dashboard V2"
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
 DB_PORT=3306
@@ -80,11 +83,7 @@ Import data secara manual dari Google Sheets:
 php artisan shipments:sync
 ```
 
-Force truncate & import ulang:
-
-```bash
-php artisan shipments:sync --replace
-```
+Setiap sync selalu mengosongkan tabel lalu import ulang, jadi tidak ada flag tambahan.
 
 ### Auto-sync setiap jam
 
@@ -113,6 +112,7 @@ Endpoint modal:
 
 - `GET /api/shipments/staging/{stagging}`
 - `GET /api/shipments/bottleneck?provinsi=...`
+- `GET /api/shipments/detail?id=...` — detail satu baris. Pakai `id`, bukan `no_resi`, karena `no_resi` bisa duplikat di sumber.
 
 ## Pengujian
 

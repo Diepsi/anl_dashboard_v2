@@ -1,3 +1,53 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+[x-cloak] {
+    display: none !important;
+}
+
+@layer base {
+    :root {
+        --anl-canvas: 243 244 246;
+        --anl-surface: 255 255 255;
+        --anl-surface-subtle: 248 250 252;
+        --anl-border: 226 232 240;
+        --anl-ink: 15 23 42;
+        --anl-muted: 100 116 139;
+        --anl-brand: 8 145 178;
+    }
+
+    html {
+        color-scheme: light;
+    }
+
+    html.dark {
+        --anl-canvas: 2 6 23;
+        --anl-surface: 15 23 42;
+        --anl-surface-subtle: 30 41 59;
+        --anl-border: 51 65 85;
+        --anl-ink: 248 250 252;
+        --anl-muted: 148 163 184;
+        --anl-brand: 34 211 238;
+
+        color-scheme: dark;
+    }
+
+    body {
+        @apply bg-canvas text-ink;
+    }
+
+    html.dark option {
+        @apply bg-slate-800 text-slate-100;
+    }
+
+    html.dark nav[role='navigation'] a,
+    html.dark nav[role='navigation'] span,
+    html.dark nav[role='navigation'] p {
+        @apply text-slate-300;
+    }
+
+    html.dark nav[role='navigation'] [aria-current='page'] > span {
+        @apply border-cyan-600 bg-cyan-600 text-slate-950;
+    }
+}

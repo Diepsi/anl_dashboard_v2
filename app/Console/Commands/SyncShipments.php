@@ -7,7 +7,7 @@ use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 
-#[Signature('shipments:sync {--replace : Kosongkan tabel sebelum import}')]
+#[Signature('shipments:sync')]
 #[Description('Sinkronkan data pengiriman dari Google Sheets (CSV publik)')]
 class SyncShipments extends Command
 {
@@ -16,7 +16,7 @@ class SyncShipments extends Command
         $this->info('Menyinkronkan data pengiriman dari Google Sheets...');
 
         try {
-            $count = $service->sync($this->option('replace'));
+            $count = $service->sync();
 
             $lastSync = $service->lastSyncedAt();
 
