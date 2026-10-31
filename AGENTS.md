@@ -171,10 +171,11 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 # ANL Dashboard — Project Notes
 
 ## Data source
-- `GOOGLE_SHEETS_CSV_URL` di `.env` menunjuk ke CSV publik Google Sheets (sheet "ANL Publikasi", vendor **BOMA**).
+- `GOOGLE_SHEETS_CSV_URL` di `.env` menunjuk ke CSV publik Google Sheets (sheet "RAW DATA", vendor **BOMA**). Gunakan varian ekspor `.../pub?gid=0&single=true&output=csv`; URL `pubhtml` mengembalikan HTML, bukan CSV, dan sync akan gagal dengan "Kolom No Resi tidak ditemukan".
 - Sinkronisasi data ke tabel `shipments` dilakukan lewat `php artisan shipments:sync` (`App\Services\ShipmentSyncService`), **selalu full replace**: `DELETE` + bulk `INSERT` per 500 baris dalam satu transaksi. Tidak ada upsert dan tidak ada flag `--replace`.
-- **Tidak ada baris sumber yang dibuang.** Duplikat `no_resi` disimpan semua (masing-masing dapat `id` sendiri) lalu ditandai, bukan digabung.
-- Setelah import, **parity guard** membandingkan jumlah baris sumber dengan `COUNT(*)` tabel; selisih apa pun akan melempar exception dan transaksi di-rollback.
+- **Baris data tidak ada yang dibuang.** Duplikat `no_resi` disimpan semua (masing-masing dapat `id` sendiri) lalu ditandai, bukan digabung.
+- **Baris kosong artefak ekspor di-skip.** Sheet sumber memakai formula yang meluas ke area kosong (mis. `=SEQUENCE(20000,1)` pada kolom "No"), sehingga ekspor CSV/Excel memuat ribuan baris tanpa `No Resi` **dan** tanpa `NAMA SEKOLAH`. Baris seperti itu bukan data dan tidak dihitung (stat `skipped_empty`); baris yang hanya salah satu kolomnya kosong tetap disimpan apa adanya.
+- Setelah import, **parity guard** membandingkan jumlah baris data (setelah skip) dengan `COUNT(*)` tabel; selisih apa pun akan melempar exception dan transaksi di-rollback.
 - Ganti `GOOGLE_SHEETS_CSV_URL` di `.env` → jalankan `php artisan shipments:sync`; tabel kosong otomatis mengikuti sheet baru. Tidak ada cache fingerprint lagi.
 - **Tanggal** sumber sering berisi data placeholder (`01/01/1900`, `13/08/2026`), jadi tidak bisa dipakai mentah:
   - `tanggal_manifest` hanya diisi dari tanggal HO ke vendor yang masuk akal (tahun 2000–tahun berjalan + 1).

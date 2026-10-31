@@ -158,13 +158,18 @@
                 $resiDuplicate = (int) ($sourceStats['resi_duplikat'] ?? 0);
                 $dupTotalRows = (int) ($sourceStats['dup_total_rows'] ?? 0);
                 $dupKeys = (int) ($sourceStats['dup_keys'] ?? 0);
+                $skippedEmpty = (int) ($sourceStats['skipped_empty'] ?? 0);
                 // resi_catatan hanya menyimpan satu label, jadi kategori
                 // "bermasalah" menang atas "Duplikat".
                 $dupInvalid = max(0, $dupTotalRows - $resiDuplicate);
             @endphp
             @if ($resiInvalid > 0 || $resiDuplicate > 0 || $dupInvalid > 0)
                 <p class="mt-2 text-xs text-muted leading-relaxed">
-                    Seluruh {{ number_format($validRows, 0, ',', '.') }} baris sumber tersimpan apa adanya, termasuk yang bermasalah — tidak ada baris yang dibuang.
+                    Seluruh {{ number_format($validRows, 0, ',', '.') }} baris data sumber tersimpan apa adanya, termasuk yang bermasalah — tidak ada baris berisi data yang dibuang.
+                    @if ($skippedEmpty > 0)
+                        <span class="font-semibold text-slate-500 dark:text-slate-400">{{ number_format($skippedEmpty, 0, ',', '.') }} baris kosong</span>
+                        (tanpa <code class="text-[11px]">No Resi</code> &amp; <code class="text-[11px]">NAMA SEKOLAH</code> — sisa formula di sheet) tidak dihitung ·
+                    @endif
                     @if ($resiInvalid > 0)
                         <span class="font-semibold text-red-700 dark:text-red-300">{{ number_format($resiInvalid, 0, ',', '.') }} resi bermasalah</span>
                         (<code class="text-[11px]">#N/A</code>, scientific notation, atau format tidak valid)
@@ -299,7 +304,7 @@
                 <div class="min-w-0">
                     <p class="text-xs font-semibold tracking-wider text-muted uppercase">Within SLA</p>
                     <p class="mt-2 text-3xl font-bold text-ink">{{ number_format($withinSla, 0, ',', '.') }}</p>
-                    <p class="mt-1 text-xs text-muted">Tepat & sesuai SLA</p>
+                    <p class="mt-1 text-xs text-muted">Tepat &amp; sesuai SLA — DB Logistics</p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-emerald-500/10 dark:bg-emerald-950/80 shrink-0">
                     <svg class="w-6 h-6 text-emerald-600 dark:text-emerald-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -313,7 +318,7 @@
         <div class="bg-surface rounded-xl shadow-sm border border-border border-t-4 border-t-red-600 dark:border-t-red-400 p-5">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                    <p class="text-xs font-semibold tracking-wider text-muted uppercase">Over SLA</p>
+                    <p class="text-xs font-semibold tracking-wider text-muted uppercase">Over SLA (DB Logistics)</p>
                     <p class="mt-2 text-3xl font-bold text-ink">{{ number_format($overSla, 0, ',', '.') }}</p>
                     <p class="mt-1 text-xs text-muted">
                         Berjalan <span class="font-semibold text-red-600 dark:text-red-300">{{ number_format($outSlaActive) }}</span>
@@ -332,11 +337,15 @@
         <div class="bg-surface rounded-xl shadow-sm border border-border border-t-4 border-t-indigo-500 dark:border-t-indigo-400 p-5">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                    <p class="text-xs font-semibold tracking-wider text-muted uppercase">SLA Ach. Rate</p>
+                    <p class="text-xs font-semibold tracking-wider text-muted uppercase">SLA &amp; Durasi (Khusus DB Logistics)</p>
                     <p class="mt-2 text-3xl font-bold text-ink">{{ $slaPct }}<span class="text-lg text-muted font-semibold">%</span></p>
                     <p class="mt-1 text-xs text-muted">
                         Meet <span class="font-semibold text-emerald-600 dark:text-emerald-300">{{ number_format($withinSla) }}</span>
                         · Over <span class="font-semibold text-red-600 dark:text-red-300">{{ number_format($overSla) }}</span>
+                    </p>
+                    <p class="mt-1 text-xs text-muted">
+                        dari <span class="font-semibold">{{ number_format($leadTimeScope) }}</span>
+                        kiriman ber-Tanggal HO
                     </p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-indigo-500/10 dark:bg-indigo-950/80 shrink-0">
@@ -351,7 +360,7 @@
         <div class="bg-surface rounded-xl shadow-sm border border-border border-t-4 border-t-cyan-600 dark:border-t-cyan-400 p-5">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                    <p class="text-xs font-semibold tracking-wider text-muted uppercase">Rata-rata Durasi</p>
+                    <p class="text-xs font-semibold tracking-wider text-muted uppercase">SLA &amp; Durasi (Khusus DB Logistics)</p>
                     <p class="mt-2 text-3xl font-bold text-ink">
                         @if ($avgLeadTime > 0)
                             {{ number_format($avgLeadTime, 1, ',', '.') }}<span class="text-lg text-muted font-semibold"> hari</span>
@@ -359,7 +368,7 @@
                             <span class="text-2xl text-muted">—</span>
                         @endif
                     </p>
-                    <p class="mt-1 text-xs text-muted">Manifest → selesai (Completed)</p>
+                    <p class="mt-1 text-xs text-muted">Manifest → selesai (Completed), hanya baris ber-Tanggal HO</p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-cyan-600/10 dark:bg-cyan-950/80 shrink-0">
                     <svg class="w-6 h-6 text-cyan-600 dark:text-cyan-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -410,8 +419,8 @@
         {{-- SLA Compliance Rate --}}
         <div class="bg-surface rounded-xl shadow-sm border border-border p-6">
             <div class="mb-4">
-                <h2 class="text-lg font-bold text-ink">SLA Compliance Rate</h2>
-                <p class="text-sm text-muted">Tingkat pemenuhan SLA keseluruhan</p>
+<h2 class="text-lg font-bold text-ink">SLA Compliance Rate</h2>
+            <p class="text-sm text-muted">Tingkat pemenuhan SLA pada baris ber-Tanggal HO (DB Logistics)</p>
             </div>
             <div class="relative h-[260px]">
                 <canvas id="slaChart"></canvas>
@@ -466,7 +475,7 @@
     <div class="bg-surface rounded-xl shadow-sm border border-border overflow-hidden stagger-ready">
         <div class="px-6 py-5 border-b border-border">
             <h2 class="text-lg font-bold text-ink">Kinerja Vendor</h2>
-            <p class="text-sm text-muted">5 vendor teratas — kualitas on-time (SLA), rata-rata durasi kirim, & aging</p>
+            <p class="text-sm text-muted">5 vendor teratas — kualitas on-time (SLA), rata-rata durasi kirim, &amp; aging. Metrik SLA &amp; durasi hanya menghitung baris ber-Tanggal HO, yaitu DB Logistics.</p>
         </div>
         <div class="overflow-x-auto dark:bg-surface">
             <table class="w-full text-left text-sm">
@@ -474,6 +483,7 @@
                     <tr class="bg-surface-subtle text-xs uppercase tracking-wider text-muted border-b border-border">
                         <th class="px-6 py-3 font-semibold">Vendor LM</th>
                         <th class="px-6 py-3 font-semibold">Total Resi</th>
+                        <th class="px-6 py-3 font-semibold">Resi Terukur</th>
                         <th class="px-6 py-3 font-semibold">On-Time (SLA)</th>
                         <th class="px-6 py-3 font-semibold">Rata-rata Durasi</th>
                         <th class="px-6 py-3 font-semibold">Rata-rata Aging</th>
@@ -483,7 +493,11 @@
                     @forelse ($vendorStats as $v)
                         <tr class="hover:bg-surface-subtle transition">
                             <td class="px-6 py-3.5 font-semibold text-ink">{{ $v['vendor'] }}</td>
-                            <td class="px-6 py-3.5 text-muted">{{ number_format($v['total'], 0, ',', '.') }}</td>
+                            <td class="px-6 py-3.5 text-muted">{{ number_format($v['total_keseluruhan'], 0, ',', '.') }}</td>
+                            <td class="px-6 py-3.5 text-muted">
+                                {{ number_format($v['total_terukur'], 0, ',', '.') }}
+                                <span class="text-xs text-muted">({{ $v['terukur_pct'] }}%)</span>
+                            </td>
                             <td class="px-6 py-3.5">
                                 <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
                                     {{ $v['onTimePct'] >= 80 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300' : ($v['onTimePct'] >= 60 ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/80 dark:text-amber-300' : 'bg-red-100 text-red-700 dark:bg-red-950/80 dark:text-red-300') }}">
@@ -494,9 +508,9 @@
                             <td class="px-6 py-3.5 text-muted">{{ $v['avgAging'] !== null ? number_format($v['avgAging'], 1, ',', '.') . ' hari' : '—' }}</td>
                         </tr>
                     @empty
-                        <tr>
-                            <td colspan="5" class="px-6 py-10 text-center text-muted">Belum ada data vendor.</td>
-                        </tr>
+<tr>
+                                <td colspan="6" class="px-6 py-10 text-center text-muted">Belum ada data vendor.</td>
+                            </tr>
                     @endforelse
                 </tbody>
             </table>
@@ -548,7 +562,7 @@
         <div id="bottleneck-wide" class="bg-surface rounded-xl shadow-sm border border-border p-6">
             <div class="mb-4">
                 <h2 class="text-lg font-bold text-ink">Bottleneck Wilayah Over SLA</h2>
-                <p class="text-sm text-muted">Provinsi dengan pengiriman melebihi SLA — klik untuk detail</p>
+                <p class="text-sm text-muted">Provinsi dengan pengiriman melebihi SLA pada baris ber-Tanggal HO — klik untuk detail</p>
             </div>
 
             @php

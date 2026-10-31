@@ -136,4 +136,67 @@ class DashboardVendorFilterTest extends TestCase
         $staging->assertOk();
         $this->assertCount(5, $staging->json());
     }
+
+    /**
+     * Baris tanpa Tanggal HO (mis. Panthera pada sumber nyata) tidak punya
+     * titik awal perhitungan durasi maupun SLA.7100 baris seperti itu harus
+     * dikeluarkan dari metrik tanpa mengurangi KPI volume.
+     */
+    public function test_sla_metrics_exclude_rows_without_a_real_manifest_date(): void
+    {
+        $this->seedShipments();
+
+        Shipment::factory()->create([
+            'no_resi' => 'P-1', 'vendor_lm' => 'VENDOR B', 'status_akhir' => 'Completed',
+            'sla_result' => 'Out SLA', 'stagging' => 'DELIVER', 'provinsi' => 'Aceh',
+            'tanggal_manifest' => null, 'tanggal_efektif' => '2026-01-10',
+            'completed_date' => '2026-01-20', 'nama_funder' => 'Panthera', 'aging' => 10,
+        ]);
+
+        $response = $this->actingAs(User::factory()->create())->get('/');
+
+        $response->assertOk();
+
+        // Volume tetap menghitung semua baris.
+        $this->assertSame(6, $response->viewData('totalShipment'));
+
+        // Metrik SLA hanya melihat 5 baris ber-Tanggal HO.
+        $this->assertSame(3, $response->viewData('withinSla'));
+        $this->assertSame(2, $response->viewData('overSla'));
+        $this->assertSame(5, $response->viewData('leadTimeScope'));
+        $this->assertSame(60.0, $response->viewData('slaPct'));
+    }
+
+    public function test_vendor_stats_report_measured_coverage_separately_from_total_volume(): void
+    {
+        $this->seedShipments();
+
+        Shipment::factory()->create([
+            'no_resi' => 'P-1', 'vendor_lm' => 'VENDOR A', 'status_akhir' => 'Completed',
+            'sla_result' => 'Out SLA', 'stagging' => 'DELIVER', 'provinsi' => 'Aceh',
+            'tanggal_manifest' => null, 'tanggal_efektif' => '2026-01-10',
+            'completed_date' => '2026-01-20', 'nama_funder' => 'Panthera', 'aging' => 10,
+        ]);
+
+        $response = $this->actingAs(User::factory()->create())->get('/?vendor=VENDOR+A');
+
+        $response->assertOk();
+
+        $row = $response->viewData('vendorStats')->firstWhere('vendor', 'VENDOR A');
+
+        $this->assertSame(4, $row['total_keseluruhan']);
+        $this->assertSame(3, $row['total_terukur']);
+        $this->assertSame(75.0, $row['terukur_pct']);
+    }
+
+    public function test_dashboard_states_that_sla_metrics_are_db_logistics_only(): void
+    {
+        $this->seedShipments();
+
+        $response = $this->actingAs(User::factory()->create())->get('/');
+
+        $response->assertOk();
+        $response->assertSee('SLA &amp; Durasi (Khusus DB Logistics)', escape: false);
+        $response->assertSee('Over SLA (DB Logistics)', escape: false);
+    }
 }

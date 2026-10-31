@@ -36,6 +36,16 @@ class DashboardController extends Controller
 
         $totalShipment = $base->clone()->count();
 
+        /**
+         * Metrik SLA dan durasi hanya bermakna untuk baris yang punya tanggal HO
+         * asli. Pada sumber, kolom tanggal HO ke vendor hanya diisi untuk DB
+         * Logistics; Panthera tidak punya tanggal serah terima sama sekali.
+         * Menyertakan seluruh baris Panthera membuat angka durasi dan kepatuhan
+         * SLA menyesatkan, jadi baris tanpa tanggal HO dikecualikan dari metrik
+         * ini, bukan dari KPI volume.
+         */
+        $slaBase = $base->clone()->withRealManifestDate();
+
         $completed = $base->clone()
             ->where('status_akhir', 'Completed')
             ->count();
@@ -44,18 +54,18 @@ class DashboardController extends Controller
         $undeliveredCount = $base->clone()->where('status_akhir', 'Undelivered')->count();
         $holdCount = $base->clone()->where('status_akhir', 'Hold')->count();
 
-        $withinSla = $base->clone()
+        $withinSla = $slaBase->clone()
             ->where('sla_result', 'Meet SLA')
             ->count();
 
-        $overSla = $base->clone()
+        $overSla = $slaBase->clone()
             ->where('sla_result', 'Out SLA')
             ->count();
 
         $slaDenom = $withinSla + $overSla;
         $slaPct = $slaDenom > 0 ? round(($withinSla / $slaDenom) * 100) : 0;
 
-        $outSlaActive = $base->clone()
+        $outSlaActive = $slaBase->clone()
             ->where('sla_result', 'Out SLA')
             ->where('status_akhir', '!=', 'Completed')
             ->count();
@@ -65,12 +75,13 @@ class DashboardController extends Controller
         $completionRate = $totalShipment > 0 ? round(($completed / $totalShipment) * 100) : 0;
         $undeliveredRate = $totalShipment > 0 ? round(($undeliveredCount / $totalShipment) * 100) : 0;
 
-        $avgLeadTime = round((float) ($base->clone()
-            ->withRealManifestDate()
+        $avgLeadTime = round((float) ($slaBase->clone()
             ->whereNotNull('completed_date')
             ->where('status_akhir', 'Completed')
             ->selectRaw('AVG(DATEDIFF(completed_date, tanggal_manifest)) as avg_lead')
             ->value('avg_lead') ?? 0), 1);
+
+        $leadTimeScope = (int) $slaBase->clone()->count();
 
         $statusBreakdown = $base->clone()
             ->selectRaw('status_akhir, COUNT(*) as total')
@@ -96,7 +107,7 @@ class DashboardController extends Controller
             ->orderBy('tanggal')
             ->get();
 
-        $outSlaDaily = $base->clone()
+        $outSlaDaily = $slaBase->clone()
             ->whereNotNull('tanggal_efektif')
             ->selectRaw('DATE(tanggal_efektif) as tanggal')
             ->selectRaw('COUNT(*) as volume_out')
@@ -106,7 +117,7 @@ class DashboardController extends Controller
             ->get()
             ->keyBy('tanggal');
 
-        $slaComplianceDaily = $base->clone()
+        $slaComplianceDaily = $slaBase->clone()
             ->whereNotNull('tanggal_efektif')
             ->selectRaw('DATE(tanggal_efektif) as tanggal')
             ->selectRaw('SUM(CASE WHEN sla_result = "Meet SLA" THEN 1 ELSE 0 END) as meet')
@@ -142,7 +153,7 @@ class DashboardController extends Controller
             ])
             ->filter(fn ($stage) => $stage['total'] > 0);
 
-        $bottleneckStats = $base->clone()
+        $bottleneckStats = $slaBase->clone()
             ->selectRaw('provinsi, COUNT(*) as total')
             ->where('sla_result', 'Out SLA')
             ->whereNotNull('provinsi')
@@ -173,7 +184,7 @@ class DashboardController extends Controller
             $topVendors->put('Lainnya', $otherVendorCount);
         }
 
-        $vendorStats = $base->clone()
+        $vendorStats = $slaBase->clone()
             ->whereNotNull('vendor_lm')
             ->where('vendor_lm', '!=', '')
             ->selectRaw('vendor_lm')
@@ -191,7 +202,27 @@ class DashboardController extends Controller
                 'onTimePct' => $r->total > 0 ? round(((int) $r->meet / (int) $r->total) * 100) : 0,
                 'avgLead' => $r->avg_lead !== null ? round((float) $r->avg_lead, 1) : null,
                 'avgAging' => $r->avg_aging !== null ? round((float) $r->avg_aging, 1) : null,
+                'total' => (int) $r->total,
             ]);
+
+        // Total baris vendor tanpa filter tanggal HO, untuk menandai cakupan tabel.
+        $vendorTotalsAll = Shipment::query()
+            ->whereNotNull('vendor_lm')
+            ->where('vendor_lm', '!=', '')
+            ->selectRaw('vendor_lm')
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('vendor_lm')
+            ->pluck('total', 'vendor_lm');
+
+        $vendorStats = $vendorStats->map(function (array $row) use ($vendorTotalsAll): array {
+            $all = (int) ($vendorTotalsAll[$row['vendor']] ?? 0);
+
+            return $row + [
+                'total_terukur' => $row['total'],
+                'total_keseluruhan' => $all,
+                'terukur_pct' => $all > 0 ? round(($row['total'] / $all) * 100) : 0,
+            ];
+        });
 
         $latestRawDate = Shipment::query()->max('tanggal_efektif');
         $earliestRawDate = Shipment::query()->min('tanggal_efektif');
@@ -272,6 +303,7 @@ class DashboardController extends Controller
             'completionRate',
             'undeliveredRate',
             'avgLeadTime',
+            'leadTimeScope',
             'statusBreakdown',
             'bastFinanceStats',
             'chartData',

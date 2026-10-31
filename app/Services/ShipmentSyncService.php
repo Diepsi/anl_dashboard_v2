@@ -60,6 +60,23 @@ class ShipmentSyncService
 
     public const SOURCE_STATS_CACHE_KEY = 'shipments.source_stats';
 
+    /**
+     * Nilai error bawaan Google Sheets/Excel. Sel ini bukan data kosong, melainkan
+     * hasil rumus yang gagal, jadi harus disalin menjadi NULL agar tidak ikut
+     * terhitung sebagai nilai kategorikal (mis. `sla_result = '#N/A'` akan
+     * terlihat sebagai baris yang tidak lolos SLA).
+     */
+    private const EXCEL_ERROR_VALUES = [
+        '#N/A',
+        '#VALUE!',
+        '#REF!',
+        '#DIV/0!',
+        '#NAME?',
+        '#NULL!',
+        '#NUM!',
+        '#GETTING_DATA',
+    ];
+
     public function lastSyncedAt(): ?Carbon
     {
         $value = Cache::get(self::LAST_SYNC_CACHE_KEY);
@@ -147,6 +164,7 @@ class ShipmentSyncService
         $chunks = [];
         $count = 0;
         $rawRows = 0;
+        $skippedEmpty = 0;
         $duplicates = [];
         $resiCounts = [
             self::RESI_CATATAN_KOSONG => 0,
@@ -177,6 +195,16 @@ class ShipmentSyncService
             // terbaca. Header bukan baris data: jangan dihitung sebagai rawRows
             // dan jangan dilaporkan sebagai baris tanpa No Resi yang diabaikan.
             if ($this->isRepeatedHeaderRow($data)) {
+                continue;
+            }
+
+            // Sheet sumber memakai formula yang meluas (mis. `=SEQUENCE(20000,1)`
+            // pada kolom "No"), sehingga ekspor CSV/Excel memuat ribuan baris
+            // kosong tanpa No Resi maupun NAMA SEKOLAH. Baris seperti itu bukan
+            // data dan tidak boleh ikut menambah total shipment.
+            if ($this->isEmptyBusinessRow($data)) {
+                $skippedEmpty++;
+
                 continue;
             }
 
@@ -236,6 +264,7 @@ class ShipmentSyncService
                 'raw_rows' => $rawRows,
                 'valid_rows' => $count,
                 'stored_rows' => $stored,
+                'skipped_empty' => $skippedEmpty,
                 'dup_extra' => $dupExtra,
                 'dup_total_rows' => $dupTotalRows,
                 'dup_keys' => count($duplicates),
@@ -258,6 +287,16 @@ class ShipmentSyncService
     {
         return $data['no_resi'] === 'No Resi'
             && strtolower((string) $data['nama_sekolah']) === 'nama sekolah';
+    }
+
+    /**
+     * Baris tanpa `no_resi` maupun `NAMA SEKOLAH` adalah artefak ekspor dari
+     * formula yang meluas ke area kosong, bukan kiriman. Baris dengan salah satu
+     * kolom itu terisi tetap disimpan apa adanya (termasuk resi bermasalah).
+     */
+    protected function isEmptyBusinessRow(array $data): bool
+    {
+        return $data['no_resi'] === '' && $data['nama_sekolah'] === '';
     }
 
     /**
@@ -383,16 +422,12 @@ class ShipmentSyncService
 
     protected function mapRow(array $row, array $index): array
     {
-        $statusInvoice = $this->pick($row, $index, $this->columnMap['status_invoice']);
+        $rawStatusInvoice = $this->pick($row, $index, $this->columnMap['status_invoice']);
 
-        if (is_string($statusInvoice)) {
-            $statusInvoice = strtoupper(trim($statusInvoice));
+        if (is_string($rawStatusInvoice) && ! $this->isExcelError(trim($rawStatusInvoice))) {
+            $normalized = strtoupper(trim($rawStatusInvoice));
 
-            if ($statusInvoice === 'TRUE' || $statusInvoice === 'PAID') {
-                $statusInvoice = 'PAID';
-            } else {
-                $statusInvoice = null;
-            }
+            $statusInvoice = ($normalized === 'TRUE' || $normalized === 'PAID') ? 'PAID' : null;
         } else {
             $statusInvoice = null;
         }
@@ -420,9 +455,9 @@ class ShipmentSyncService
             'tanggal_sumber' => $tanggal['tanggal_sumber'],
             'completed_date' => $this->toDate($this->pick($row, $index, $this->columnMap['completed_date'])),
             'tgl_sampai_kota_tujuan' => $this->toDate($this->pick($row, $index, $this->columnMap['tgl_sampai_kota_tujuan'])),
-            'aging' => $this->toInt($this->pick($row, $index, $this->columnMap['aging'])),
-            'status_akhir' => $this->nullableString($this->pick($row, $index, $this->columnMap['status_akhir'])) ?? 'On Process',
-            'status_instalasi' => $this->nullableString($this->pick($row, $index, $this->columnMap['status_instalasi'])) ?? 'BELUM',
+            'aging' => $this->toNullableNonNegativeInt($this->pick($row, $index, $this->columnMap['aging'])),
+            'status_akhir' => $this->enumString($this->pick($row, $index, $this->columnMap['status_akhir']), 'On Process'),
+            'status_instalasi' => $this->enumString($this->pick($row, $index, $this->columnMap['status_instalasi']), 'BELUM'),
             'harga_per_shipment' => $this->toDecimal($this->pick($row, $index, $this->columnMap['harga_per_shipment'])),
             'status_invoice' => $statusInvoice,
             'stagging' => $this->nullableString($this->pick($row, $index, $this->columnMap['stagging'])),
@@ -540,11 +575,31 @@ class ShipmentSyncService
 
     protected function nullableString($value): ?string
     {
-        if ($value === null || trim((string) $value) === '') {
+        if ($value === null) {
             return null;
         }
 
-        return (string) $value;
+        $value = trim((string) $value);
+
+        if ($value === '' || $this->isExcelError($value)) {
+            return null;
+        }
+
+        return $value;
+    }
+
+    protected function isExcelError(string $value): bool
+    {
+        return in_array(strtoupper($value), self::EXCEL_ERROR_VALUES, true);
+    }
+
+    /**
+     * String yang boleh dipakai sebagai label enum: error Excel dipetakan ke
+     * nilai bawaan kolom, bukan disimpan apa adanya.
+     */
+    protected function enumString($value, string $default): string
+    {
+        return $this->nullableString($value) ?? $default;
     }
 
     protected function toDate($value): ?string
@@ -578,13 +633,23 @@ class ShipmentSyncService
         return null;
     }
 
-    protected function toInt($value): int
+    /**
+     * `Aging` pada sumber bisa bernilai negatif untuk baris tanpa tanggal acuan
+     * (mis. -45960 pada Undelivered). Nilai negatif adalah artefak perhitungan
+     * sheet, bukan umur pengiriman, jadi disimpan sebagai NULL agar MySQL
+     * mengabaikannya pada `AVG(aging)`.
+     */
+    protected function toNullableNonNegativeInt($value): ?int
     {
-        if (is_numeric($value)) {
-            return (int) $value;
+        $value = trim((string) $value);
+
+        if ($value === '' || ! is_numeric($value)) {
+            return null;
         }
 
-        return 0;
+        $number = (int) $value;
+
+        return $number < 0 ? null : $number;
     }
 
     /**
@@ -608,4 +673,13 @@ class ShipmentSyncService
 
         return 0;
     }
+
+    /**
+     * `no_resi` sengaja tidak disanitasi. Sumber memuat nilai yang rusak
+     * (`1,01E+15`, `#N/A`, harga) yang perlu tetap tersimpan agar bisa ditelusuri
+     * kembali ke baris sheet asalnya; abnormality ditandai lewat `resi_catatan`.
+     * Memangkas karakter non-alfanumerik justru mengubah `1,01E+15` menjadi resi
+     * palsu `10115` dan merusak deteksi baris header yang membandingkan
+     * `no_resi` dengan nilai literal `No Resi`.
+     */
 }

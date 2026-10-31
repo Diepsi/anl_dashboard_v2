@@ -15,8 +15,9 @@ class DashboardBannerTest extends TestCase
     {
         return array_merge([
             'raw_rows' => 31709,
-            'valid_rows' => 31709,
-            'stored_rows' => 31709,
+            'valid_rows' => 30530,
+            'stored_rows' => 30530,
+            'skipped_empty' => 1179,
             'dup_extra' => 646,
             'dup_total_rows' => 671,
             'dup_keys' => 25,
@@ -52,13 +53,15 @@ class DashboardBannerTest extends TestCase
         $response->assertSee('624 sisanya sudah termasuk');
     }
 
-    public function test_banner_does_not_claim_any_rows_were_skipped(): void
+    public function test_banner_reports_blank_rows_are_not_counted(): void
     {
         $response = $this->render();
 
         $response->assertOk();
-        $response->assertDontSee('diabaikan');
-        $response->assertDontSee('baris tanpa No Resi');
+        $response->assertSee('baris kosong');
+        $response->assertSee('tidak dihitung');
+        // Baris berisi data tetap dijamin tidak dibuang.
+        $response->assertSee('tidak ada baris berisi data yang dibuang');
     }
 
     public function test_banner_is_hidden_without_source_stats(): void

@@ -24,6 +24,11 @@ class ShipmentSyncServiceTest extends TestCase
         'Status Akhir',
         'Update Stagging',
         'SLA for DB',
+        'Result Delivery for DB',
+        'Aging',
+        'Status Instalasi',
+        'Status Invoice',
+        'Nama Penerima',
         'TGL HO BAST KE FINANCE',
         'Founder',
         'Code Funder',
@@ -70,6 +75,11 @@ class ShipmentSyncServiceTest extends TestCase
             'Status Akhir' => 'Completed',
             'Update Stagging' => 'BERANGKAT DARI CROSSDOCK',
             'SLA for DB' => '',
+            'Result Delivery for DB' => '',
+            'Aging' => '12',
+            'Status Instalasi' => 'DONE',
+            'Status Invoice' => '',
+            'Nama Penerima' => 'Budi Santoso',
             'TGL HO BAST KE FINANCE' => '',
             'Founder' => 'DB Logistics',
             'Code Funder' => 'DB-01',
@@ -275,7 +285,46 @@ class ShipmentSyncServiceTest extends TestCase
         $this->assertSame(2, $stats['raw_rows']);
         $this->assertSame(2, $stats['valid_rows']);
         $this->assertSame(2, $stats['stored_rows']);
-        $this->assertArrayNotHasKey('skipped_empty', $stats);
+        $this->assertSame(0, $stats['skipped_empty']);
+    }
+
+    public function test_blank_export_rows_are_skipped(): void
+    {
+        $this->fakeCsv([
+            $this->row(['No Resi' => 'RESI-1']),
+            array_fill(0, count(self::HEADER), ''),
+            array_fill(0, count(self::HEADER), ''),
+            $this->row(['No Resi' => 'RESI-2']),
+        ]);
+
+        $this->assertSame(2, $this->sync());
+        $this->assertSame(2, Shipment::count());
+
+        $stats = app(ShipmentSyncService::class)->sourceStats();
+
+        $this->assertSame(2, $stats['raw_rows']);
+        $this->assertSame(2, $stats['valid_rows']);
+        $this->assertSame(2, $stats['stored_rows']);
+        $this->assertSame(2, $stats['skipped_empty']);
+    }
+
+    /**
+     * Baris tanpa No Resi tapi masih punya NAMA SEKOLAH tetap disimpan dan
+     * ditandai "KOSONG", bukan dianggap baris kosong artefak ekspor.
+     */
+    public function test_row_without_resi_but_with_school_is_kept(): void
+    {
+        $this->fakeCsv([
+            $this->row(['No Resi' => '', 'NAMA SEKOLAH' => 'SD Negeri Satu']),
+        ]);
+
+        $this->sync();
+
+        $shipment = Shipment::firstOrFail();
+
+        $this->assertSame(1, Shipment::count());
+        $this->assertSame('SD Negeri Satu', $shipment->nama_sekolah);
+        $this->assertSame(ShipmentSyncService::RESI_CATATAN_KOSONG, $shipment->resi_catatan);
     }
 
     public function test_duplicate_stats_separate_valid_labels_from_invalid_ones(): void
@@ -340,5 +389,145 @@ class ShipmentSyncServiceTest extends TestCase
 
         $this->assertSame(1, Shipment::count());
         $this->assertSame('RESI-9', Shipment::firstOrFail()->no_resi);
+    }
+
+    public static function excelErrorProvider(): array
+    {
+        return [
+            'not available' => ['#N/A'],
+            'value error' => ['#VALUE!'],
+            'reference error' => ['#REF!'],
+            'divide by zero' => ['#DIV/0!'],
+            'lowercase n/a' => ['#n/a'],
+        ];
+    }
+
+    /**
+     * Error Excel adalah hasil rumus yang gagal, bukan data. Disimpan apa adanya
+     * membuat `sla_result = '#N/A'` terlihat seperti baris yang tidak lolos SLA.
+     */
+    #[DataProvider('excelErrorProvider')]
+    public function test_excel_error_in_sla_result_is_stored_as_null(string $error): void
+    {
+        $this->fakeCsv([$this->row(['Result Delivery for DB' => $error])]);
+
+        $this->sync();
+
+        $this->assertNull(Shipment::firstOrFail()->sla_result);
+    }
+
+    #[DataProvider('excelErrorProvider')]
+    public function test_excel_error_in_nullable_text_is_stored_as_null(string $error): void
+    {
+        $this->fakeCsv([$this->row(['Update Stagging' => $error])]);
+
+        $this->sync();
+
+        $this->assertNull(Shipment::firstOrFail()->stagging);
+    }
+
+    public function test_excel_error_in_status_instalasi_falls_back_to_belum(): void
+    {
+        $this->fakeCsv([$this->row(['Status Instalasi' => '#N/A'])]);
+
+        $this->sync();
+
+        $shipment = Shipment::firstOrFail();
+
+        $this->assertSame('BELUM', $shipment->status_instalasi);
+        $this->assertNotSame('#N/A', $shipment->status_instalasi);
+    }
+
+    public function test_long_status_instalasi_is_stored_intact(): void
+    {
+        $this->fakeCsv([$this->row(['Status Instalasi' => 'belum update pada TMS'])]);
+
+        $this->sync();
+
+        $this->assertSame('belum update pada TMS', Shipment::firstOrFail()->status_instalasi);
+    }
+
+    public function test_excel_error_in_status_akhir_falls_back_to_on_process(): void
+    {
+        $this->fakeCsv([$this->row(['Status Akhir' => '#VALUE!'])]);
+
+        $this->sync();
+
+        $this->assertSame('On Process', Shipment::firstOrFail()->status_akhir);
+    }
+
+    public function test_excel_error_in_status_invoice_is_not_treated_as_paid(): void
+    {
+        $this->fakeCsv([$this->row(['Status Invoice' => '#N/A'])]);
+
+        $this->sync();
+
+        $this->assertNull(Shipment::firstOrFail()->status_invoice);
+    }
+
+    /**
+     * Aging negatif adalah artefak perhitungan sheet untuk baris tanpa tanggal
+     * acuan (mis. -45960 pada Undelivered), bukan umur pengiriman.
+     */
+    public function test_negative_aging_is_stored_as_null(): void
+    {
+        $this->fakeCsv([$this->row(['No Resi' => 'RESI-NEGATIF', 'Aging' => '-45960'])]);
+
+        $this->sync();
+
+        $this->assertNull(Shipment::firstOrFail()->aging);
+    }
+
+    public function test_positive_aging_is_preserved(): void
+    {
+        $this->fakeCsv([$this->row(['Aging' => '27'])]);
+
+        $this->sync();
+
+        $this->assertSame(27, Shipment::firstOrFail()->aging);
+    }
+
+    public function test_non_numeric_aging_is_stored_as_null(): void
+    {
+        $this->fakeCsv([$this->row(['Aging' => '#N/A'])]);
+
+        $this->sync();
+
+        $this->assertNull(Shipment::firstOrFail()->aging);
+    }
+
+    /**
+     * Nilai rusak pada `no_resi` harus tetap utuh agar bisa ditelusuri ke baris
+     * sheet asalnya. Memangkas karakter akan mengubah `1,01E+15` menjadi resi
+     * palsu `10115` dan membuat deteksi baris header gagal.
+     */
+    public function test_broken_no_resi_is_preserved_verbatim(): void
+    {
+        $this->fakeCsv([
+            $this->row(['No Resi' => '1,01E+15']),
+            $this->row(['No Resi' => '#N/A']),
+            $this->row(['No Resi' => '20212771_1']),
+        ]);
+
+        $this->sync();
+
+        $stored = Shipment::orderBy('id')->pluck('no_resi')->all();
+
+        $this->assertSame(['1,01E+15', '#N/A', '20212771_1'], $stored);
+        $this->assertFalse(Shipment::where('no_resi', '1,01E+15')->firstOrFail()->resi_valid);
+        $this->assertTrue(Shipment::where('no_resi', '20212771_1')->firstOrFail()->resi_valid);
+    }
+
+    public function test_repeated_header_row_is_not_counted_as_data(): void
+    {
+        $this->fakeCsv([
+            $this->row(['No Resi' => 'RESI-1']),
+            self::HEADER,
+            $this->row(['No Resi' => 'RESI-2']),
+        ]);
+
+        $this->assertSame(2, $this->sync());
+        $this->assertSame(2, Shipment::count());
+        $this->assertSame(2, app(ShipmentSyncService::class)->sourceStats()['raw_rows']);
     }
 }
